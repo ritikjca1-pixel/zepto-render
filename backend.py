@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright.sync_api import sync_playwright, Page, BrowserContext
 import uvicorn
 
+# Force Playwright to look for browser binaries inside the project folder on Render
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(os.path.dirname(__file__), ".playwright-browsers")
+
 app = FastAPI(title="Zepto Category Scraper API")
 app.add_middleware(
     CORSMiddleware,
@@ -99,8 +102,8 @@ PINCODE_COORDS: dict[str, tuple[float, float]] = {
     "560103": (13.0155, 77.7337), "560104": (13.0305, 77.7487), "560105": (12.8398, 77.7303),
     "560107": (13.0450, 77.7641), "560109": (12.9149, 77.6382), "560110": (12.9014, 77.6301),
     "600001": (13.0827, 80.2707), "700001": (22.5726, 88.3639), "500001": (17.3850, 78.4867),
-    "411001": (18.5204, 73.8567), "380001": (23.0225, 72.5714), "380001": (23.0225, 72.5714),
-    "302001": (26.9124, 75.7873), "226001": (26.8467, 80.9462),
+    "411001": (18.5204, 73.8567), "380001": (23.0225, 72.5714), "302001": (26.9124, 75.7873),
+    "226001": (26.8467, 80.9462),
 }
 
 def _launch_browser(p) -> tuple[BrowserContext, Page]:
@@ -115,11 +118,8 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
             "--disable-dev-shm-usage",
         ],
     )
-    try:
-        ctx = p.chromium.launch_persistent_context(profile_dir, channel="chrome", **kwargs)
-    except Exception:
-        # Fallback systematically searches global system binaries to bypass cache directory issues
-        ctx = p.chromium.launch_persistent_context(profile_dir, channel="chromium", **kwargs)
+    # Playwright dynamically selects binaries bundled natively inside .playwright-browsers
+    ctx = p.chromium.launch_persistent_context(profile_dir, **kwargs)
     
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
     page.add_init_script(
@@ -312,7 +312,7 @@ def check_discount_multi(req: MultiScrapeRequest):
         if sub:
             if sub not in subcats:
                 raise HTTPException(status_code=404, detail=f"Subcategory '{sub}' not found in '{cat}'.")
-            urls_to_scrape.append((f"{cat} › {sub}", subcats[sub]))
+                urls_to_scrape.append((f"{cat} › {sub}", subcats[sub]))
         else:
             for subcat_name, url in subcats.items():
                 urls_to_scrape.append((f"{cat} › {subcat_name}", url))
@@ -346,4 +346,3 @@ def check_discount_multi(req: MultiScrapeRequest):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
-    
