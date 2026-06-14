@@ -99,15 +99,15 @@ PINCODE_COORDS: dict[str, tuple[float, float]] = {
     "560103": (13.0155, 77.7337), "560104": (13.0305, 77.7487), "560105": (12.8398, 77.7303),
     "560107": (13.0450, 77.7641), "560109": (12.9149, 77.6382), "560110": (12.9014, 77.6301),
     "600001": (13.0827, 80.2707), "700001": (22.5726, 88.3639), "500001": (17.3850, 78.4867),
-    "411001": (18.5204, 73.8567), "380001": (23.0225, 72.5714), "302001": (26.9124, 75.7873),
-    "226001": (26.8467, 80.9462),
+    "411001": (18.5204, 73.8567), "380001": (23.0225, 72.5714), "380001": (23.0225, 72.5714),
+    "302001": (26.9124, 75.7873), "226001": (26.8467, 80.9462),
 }
 
 def _launch_browser(p) -> tuple[BrowserContext, Page]:
     profile_dir = os.path.join(os.getcwd(), "zepto_profile")
     os.makedirs(profile_dir, exist_ok=True)
     kwargs = dict(
-        headless=True,  # Changed to True for running on headless Render nodes
+        headless=True,  
         viewport={"width": 1366, "height": 768},
         args=[
             "--disable-blink-features=AutomationControlled",
@@ -118,7 +118,9 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
     try:
         ctx = p.chromium.launch_persistent_context(profile_dir, channel="chrome", **kwargs)
     except Exception:
-        ctx = p.chromium.launch_persistent_context(profile_dir, **kwargs)
+        # Fallback systematically searches global system binaries to bypass cache directory issues
+        ctx = p.chromium.launch_persistent_context(profile_dir, channel="chromium", **kwargs)
+    
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
     page.add_init_script(
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
@@ -342,6 +344,6 @@ def check_discount_multi(req: MultiScrapeRequest):
     }
 
 if __name__ == "__main__":
-    # Render assigns dynamic ports via environment variable. 0.0.0.0 enables outside routing.
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
+    
