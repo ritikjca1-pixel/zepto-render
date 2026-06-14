@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 
 # Fallback to localhost if environment variable is not defined
-API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
+API_BASE = "https://zepto-backend.onrender.com"
 
 # ─────────────────────────────────────────────
 #  PAGE CONFIG
