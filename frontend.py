@@ -3,7 +3,7 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Fallback to localhost if environment variable is not defined
+# Clean target URL string with NO trailing slash to maintain valid route concatenations
 API_BASE = "https://zepto-render-1.onrender.com"
 
 # ─────────────────────────────────────────────
@@ -57,7 +57,7 @@ def send_telegram_alert(bot_token: str, chat_id: str, products: list[dict], thre
         msg = (
             f"🏷️ *{name}*\n"
             f"📂 {src}\n"
-            f"💰 ~~₹{mrp:.0f}~~ → *₹{price:.0f}*  (*{disc:.1f}% off*)\n"
+            f"💰 ~~₹{mrp:.0f}~~ → *₹{price:.0f}* (*{disc:.1f}% off*)\n"
             f"🔗 [View on Zepto]({link})"
         )
         try:
@@ -143,7 +143,7 @@ categories = fetch_categories()
 
 if not categories:
     st.warning("⚠️ Cannot reach backend. Start it first:")
-    st.code("python \"backend (1).py\"", language="bash")
+    st.code("python backend.py", language="bash")
     st.stop()
 
 cat_names = list(categories.keys())
@@ -391,4 +391,5 @@ else:
     st.info(
         "👆 Build your selection above (add as many rows as you like), "
         "then click **Browse & Track Discounts**."
-    )
+                         )
+        
