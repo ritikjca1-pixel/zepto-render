@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import gc  
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,26 +112,56 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
     os.makedirs(profile_dir, exist_ok=True)
     kwargs = dict(
         headless=True,  
-        viewport={"width": 1366, "height": 768},
+        viewport={"width": 1280, "height": 720}, 
         args=[
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",                  
+            "--js-flags='--max-old-space-size=256'", 
         ],
     )
-    # Playwright dynamically selects binaries bundled natively inside .playwright-browsers
     ctx = p.chromium.launch_persistent_context(profile_dir, **kwargs)
     
+    # STEALTH UPDATE: Mask browser fingerprint variables to appear human
+    ctx.set_extra_http_headers({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
+    })
+    
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    page.add_init_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
+    
+    # Block asset files to conserve container RAM
+    def _block_unnecessary_assets(route):
+        req_type = route.request.resource_type
+        if req_type in ["image", "font", "media", "stylesheet"]:
+            route.abort()
+        else:
+            route.continue_()
+            
+    page.route("**/*", _block_unnecessary_assets)
+    
+    # Overwrite the automated engine navigator flag explicitly
+    page.add_init_script("""() => {
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        window.navigator.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+    }""")
     return ctx, page
 
 def _inject_pincode(page: Page, pincode: str):
-    coords = PINCODE_COORDS.get(pincode, (28.6139, 77.2090))
+    coords = PINCODE_COORDS.get(pincode, (28.5494, 77.2001)) # Fallback gracefully to default coordinates
     lat, lng = coords
-    print(f"📍 Pincode {pincode}  →  lat={lat}  lng={lng}")
     page.evaluate(f"""() => {{
         const loc = {{lat:{lat}, lng:{lng}, address:"{pincode}, India",
                       pincode:"{pincode}", city:"India"}};
@@ -140,19 +171,21 @@ def _inject_pincode(page: Page, pincode: str):
         document.cookie = 'pincode={pincode}; path=/';
         document.cookie = 'userPincode={pincode}; path=/';
     }}""")
-    page.reload(wait_until="domcontentloaded")
-    page.wait_for_timeout(2500)
+    page.reload(wait_until="commit") # Wait only until response starts to bypass headless wait locks
+    page.wait_for_timeout(2000)
 
 def _extract_products(page: Page, source_label: str) -> list[dict]:
-    for _ in range(8):
-        page.keyboard.press("End")
-        page.wait_for_timeout(800)
-    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    page.wait_for_timeout(1500)
+    # Smooth humanized scrolling loops
+    for _ in range(4):
+        page.mouse.wheel(0, 800)
+        page.wait_for_timeout(600)
+    page.wait_for_timeout(1000)
 
+    # Use a backup anchor class selector pattern if structured href links are hidden in shadow trees
     cards = page.locator('a[href*="/pn/"]').all()
-    print(f"  ↳ {len(cards)} card(s) found on '{source_label}'")
-
+    if not cards:
+        cards = page.locator('[data-testid="product-card"]').all() # Standard alternative fallback selector
+        
     products: list[dict] = []
     seen: set[str] = set()
 
@@ -169,22 +202,18 @@ def _extract_products(page: Page, source_label: str) -> list[dict]:
                 continue
 
             lines = [l.strip() for l in text.split("\n") if l.strip()]
-
             title = "Unknown Product"
             for line in lines:
                 if (
                     "₹" not in line
                     and "Rs." not in line
-                    and line.upper() not in ("ADD", "OUT OF STOCK", "NOTIFY", "SOLD OUT")
+                    and line.upper() not in ("ADD", "OUT OF STOCK", "NOTIFY", "SOLD OUT", "OFF")
                     and len(line) > 3
                 ):
                     title = line
                     break
 
-            prices = [
-                float(m)
-                for m in re.findall(r'(?:₹|Rs\.?)\s*(\d+(?:\.\d+)?)', text)
-            ]
+            prices = [float(m) for m in re.findall(r'(?:₹|Rs\.?)\s*(\d+(?:\.\d+)?)', text)]
             if not prices:
                 continue
 
@@ -212,17 +241,20 @@ def scrape_urls(urls: list[tuple[str, str]], pincode: str) -> list[dict]:
     all_products: list[dict] = []
     with sync_playwright() as p:
         ctx, page = _launch_browser(p)
-        print("🏠 Loading Zepto homepage…")
-        page.goto("https://www.zepto.com/", wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
+        page.goto("https://www.zepto.com/", wait_until="commit")
+        page.wait_for_timeout(2000)
         _inject_pincode(page, pincode)
 
         for label, url in urls:
-            print(f"\n📂 Navigating to: {url}")
-            page.goto(url, wait_until="domcontentloaded")
-            page.wait_for_timeout(4500)
-            products = _extract_products(page, label)
-            all_products.extend(products)
+            try:
+                # Add humanized referrer configuration to request context headers
+                page.goto(url, wait_until="domcontentloaded", referer="https://www.zepto.com/")
+                page.wait_for_timeout(2500)
+                products = _extract_products(page, label)
+                all_products.extend(products)
+            except Exception as page_err:
+                print(f"Skipping page due to execution lag: {page_err}")
+                continue
         ctx.close()
 
     seen: set[str] = set()
@@ -231,6 +263,8 @@ def scrape_urls(urls: list[tuple[str, str]], pincode: str) -> list[dict]:
         if p["product_link"] not in seen:
             seen.add(p["product_link"])
             unique.append(p)
+            
+    gc.collect()
     return unique
 
 @app.get("/api/categories")
@@ -239,51 +273,6 @@ def get_categories():
     for cat, data in CATEGORY_MAP.items():
         result[cat] = list(data["subcategories"].keys())
     return {"categories": result}
-
-@app.get("/api/check-discount")
-def check_discount(
-    category: str   = Query(...,    description="Category name"),
-    subcategory: Optional[str] = Query(None, description="Subcategory name (omit = entire category)"),
-    alert_threshold: float     = Query(20.0, description="Min discount % to flag"),
-    pincode: str               = Query("110017"),
-):
-    if category not in CATEGORY_MAP:
-        raise HTTPException(status_code=404, detail=f"Category '{category}' not in map.")
-
-    cat_data = CATEGORY_MAP[category]
-    subcats  = cat_data["subcategories"]
-
-    if subcategory:
-        if subcategory not in subcats:
-            raise HTTPException(status_code=404, detail=f"Subcategory '{subcategory}' not found.")
-        urls_to_scrape = [(f"{category} › {subcategory}", subcats[subcategory])]
-    else:
-        urls_to_scrape = [
-            (f"{category} › {sub}", url)
-            for sub, url in subcats.items()
-        ]
-
-    print(f"\n🗂  Scraping {len(urls_to_scrape)} URL(s) for '{category}'"
-          f"{' › ' + subcategory if subcategory else ''} | pincode={pincode}")
-
-    try:
-        products = scrape_urls(urls_to_scrape, pincode)
-    except Exception as e:
-        return {"status": "error", "error_type": type(e).__name__, "details": str(e)}
-
-    alerts = [p for p in products if p["discount_percent"] >= alert_threshold]
-
-    return {
-        "status":               "success",
-        "category":             category,
-        "subcategory":          subcategory,
-        "pincode":              pincode,
-        "urls_scraped":         len(urls_to_scrape),
-        "total_items_scanned":  len(products),
-        "total_alerts_triggered": len(alerts),
-        "high_discount_items":  alerts,
-        "all_scanned_items":    products,
-    }
 
 from pydantic import BaseModel
 
@@ -312,7 +301,7 @@ def check_discount_multi(req: MultiScrapeRequest):
         if sub:
             if sub not in subcats:
                 raise HTTPException(status_code=404, detail=f"Subcategory '{sub}' not found in '{cat}'.")
-                urls_to_scrape.append((f"{cat} › {sub}", subcats[sub]))
+            urls_to_scrape.append((f"{cat} › {sub}", subcats[sub]))
         else:
             for subcat_name, url in subcats.items():
                 urls_to_scrape.append((f"{cat} › {subcat_name}", url))
@@ -323,8 +312,6 @@ def check_discount_multi(req: MultiScrapeRequest):
         if url not in seen_urls:
             seen_urls.add(url)
             deduped.append((label, url))
-
-    print(f"\n🗂  Multi-scrape: {len(deduped)} unique URL(s) | pincode={req.pincode}")
 
     try:
         products = scrape_urls(deduped, req.pincode)
@@ -346,3 +333,4 @@ def check_discount_multi(req: MultiScrapeRequest):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
+    
