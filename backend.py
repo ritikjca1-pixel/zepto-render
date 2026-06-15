@@ -6,10 +6,9 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.sync_api import sync_playwright, Page, BrowserContext
-import uvicorn
 
-# Force Playwright to look for browser binaries inside the project folder on Render
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(os.path.dirname(__file__), ".playwright-browsers")
+# Force Playwright to look for browser binaries inside the project folder
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(os.path.abspath(os.path.dirname(__file__)), ".playwright-browsers")
 
 app = FastAPI(title="Zepto Category Scraper API")
 app.add_middleware(
@@ -19,8 +18,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load category map from categories_urls (1).json verbatim
-_JSON_PATH = os.path.join(os.path.dirname(__file__), "categories_urls (1).json")
+# VERCEL FIX: Absolute path routing for serverless execution environments
+_JSON_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "categories_urls (1).json")
 
 def _load_category_map() -> dict:
     with open(_JSON_PATH, "r", encoding="utf-8") as f:
@@ -123,7 +122,6 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
     )
     ctx = p.chromium.launch_persistent_context(profile_dir, **kwargs)
     
-    # STEALTH UPDATE: Mask browser fingerprint variables to appear human
     ctx.set_extra_http_headers({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
@@ -140,7 +138,6 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
     
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
     
-    # Block asset files to conserve container RAM
     def _block_unnecessary_assets(route):
         req_type = route.request.resource_type
         if req_type in ["image", "font", "media", "stylesheet"]:
@@ -150,7 +147,6 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
             
     page.route("**/*", _block_unnecessary_assets)
     
-    # Overwrite the automated engine navigator flag explicitly
     page.add_init_script("""() => {
         Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
         window.navigator.chrome = { runtime: {} };
@@ -160,7 +156,7 @@ def _launch_browser(p) -> tuple[BrowserContext, Page]:
     return ctx, page
 
 def _inject_pincode(page: Page, pincode: str):
-    coords = PINCODE_COORDS.get(pincode, (28.5494, 77.2001)) # Fallback gracefully to default coordinates
+    coords = PINCODE_COORDS.get(pincode, (28.5494, 77.2001)) 
     lat, lng = coords
     page.evaluate(f"""() => {{
         const loc = {{lat:{lat}, lng:{lng}, address:"{pincode}, India",
@@ -171,20 +167,18 @@ def _inject_pincode(page: Page, pincode: str):
         document.cookie = 'pincode={pincode}; path=/';
         document.cookie = 'userPincode={pincode}; path=/';
     }}""")
-    page.reload(wait_until="commit") # Wait only until response starts to bypass headless wait locks
+    page.reload(wait_until="commit") 
     page.wait_for_timeout(2000)
 
 def _extract_products(page: Page, source_label: str) -> list[dict]:
-    # Smooth humanized scrolling loops
     for _ in range(4):
         page.mouse.wheel(0, 800)
         page.wait_for_timeout(600)
     page.wait_for_timeout(1000)
 
-    # Use a backup anchor class selector pattern if structured href links are hidden in shadow trees
     cards = page.locator('a[href*="/pn/"]').all()
     if not cards:
-        cards = page.locator('[data-testid="product-card"]').all() # Standard alternative fallback selector
+        cards = page.locator('[data-testid="product-card"]').all() 
         
     products: list[dict] = []
     seen: set[str] = set()
@@ -247,7 +241,6 @@ def scrape_urls(urls: list[tuple[str, str]], pincode: str) -> list[dict]:
 
         for label, url in urls:
             try:
-                # Add humanized referrer configuration to request context headers
                 page.goto(url, wait_until="domcontentloaded", referer="https://www.zepto.com/")
                 page.wait_for_timeout(2500)
                 products = _extract_products(page, label)
@@ -329,8 +322,3 @@ def check_discount_multi(req: MultiScrapeRequest):
         "high_discount_items":    alerts,
         "all_scanned_items":      products,
     }
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
-    
