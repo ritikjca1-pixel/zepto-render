@@ -3,7 +3,7 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Clean target URL string with NO trailing slash to maintain valid route concatenations
+# The exact target link for your active Render backend service
 API_BASE = "https://zepto-render-1.onrender.com"
 
 # ─────────────────────────────────────────────
@@ -116,44 +116,29 @@ with st.sidebar:
         disabled=not tg_enabled,
     )
 
-    st.divider()
-    st.info(
-        "**How it works**\n\n"
-        "1. Add one or more **Category / Subcategory** rows.\n"
-        "   - Leaving Subcategory blank → whole category scraped.\n"
-        "   - Mix freely across categories.\n"
-        "2. Click **Browse & Track Discounts**.\n\n"
-        "The scraper opens Zepto's real pages directly\n"
-        "— no keyword search at all."
-    )
-
 # ─────────────────────────────────────────────
-#  LOAD CATEGORIES FROM BACKEND
+#  HARDCODED VERBATIM MAPPING ENGINE (No Network Dependencies)
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def fetch_categories() -> dict:
-    try:
-        r = requests.get(f"{API_BASE}/api/categories", timeout=8)
-        r.raise_for_status()
-        return r.json().get("categories", {})
-    except Exception:
-        return {}
+RAW_MAP = {
+    "Snacks": {
+        "subcategories": {
+            "Chips & Crisps": "https://www.zepto.com/cn/snacks/chips-crisps/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/77ab36f4-c8c7-43f1-b8ef-0d48ff0070bc",
+            "Nachos & Popcorn": "https://www.zepto.com/cn/snacks/nachos-popcorn/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/8c156477-9ca6-4fb4-81d7-21a4f00fe772",
+            "Namkeen & Bhujia": "https://www.zepto.com/cn/snacks/namkeen-bhujia/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/be268045-8fbe-4ee5-bc65-0a379f648d70",
+            "Puffs & Rice Snacks": "https://www.zepto.com/cn/snacks/puffs-rice-snacks/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/e634795b-cbef-4573-95ca-9d22bf6ebcf0",
+            "Biscuits": "https://www.zepto.com/cn/snacks/biscuits/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/fbe9725f-2c7c-47bc-ad77-3e1a129d3326",
+            "Cookies": "https://www.zepto.com/cn/snacks/cookies/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/efae2a11-5b72-46a4-bb0a-a037803ba9ef",
+            "Rusks & Wafers": "https://www.zepto.com/cn/snacks/rusks-wafers/cid/99320b92-fc15-4ba5-bc4e-2895a12f4df6/scid/f56f4d85-a7b5-4b0e-b7f7-b8dbf9de4cf6"
+        }
+    }
+}
 
-categories = fetch_categories()
-
-if not categories:
-    st.warning("⚠️ Cannot reach backend. Start it first:")
-    st.code("python backend.py", language="bash")
-    st.stop()
-
-cat_names = list(categories.keys())
+cat_names = list(RAW_MAP.keys())
 
 # ─────────────────────────────────────────────
 #  MULTI-SELECT BUILDER
 # ─────────────────────────────────────────────
 st.subheader("📂 Select What to Scrape")
-st.caption("Add as many category/subcategory combinations as you like. "
-           "Leave Subcategory blank to scrape the whole category.")
 
 if "selections" not in st.session_state:
     st.session_state.selections = [{"category": cat_names[0], "subcategory": None}]
@@ -170,226 +155,107 @@ for i, sel in enumerate(st.session_state.selections):
 
     with c_cat:
         chosen_cat = st.selectbox(
-            f"Category" if i == 0 else " ",
-            options=cat_names,
+            f"Category" if i == 0 else " ", options=cat_names,
             index=cat_names.index(sel["category"]) if sel["category"] in cat_names else 0,
-            key=f"cat_{i}",
-            label_visibility="visible" if i == 0 else "collapsed",
+            key=f"cat_{i}", label_visibility="visible" if i == 0 else "collapsed"
         )
         st.session_state.selections[i]["category"] = chosen_cat
 
     with c_sub:
-        subcat_options = ["— All subcategories —"] + categories[chosen_cat]
+        subcat_list = list(RAW_MAP[chosen_cat]["subcategories"].keys())
+        subcat_options = ["— All subcategories —"] + subcat_list
         current_sub = sel.get("subcategory") or "— All subcategories —"
         if current_sub not in subcat_options:
             current_sub = "— All subcategories —"
 
         chosen_sub = st.selectbox(
-            "Subcategory (optional)" if i == 0 else " ",
-            options=subcat_options,
-            index=subcat_options.index(current_sub),
-            key=f"sub_{i}",
-            label_visibility="visible" if i == 0 else "collapsed",
+            "Subcategory (optional)" if i == 0 else " ", options=subcat_options,
+            index=subcat_options.index(current_sub), key=f"sub_{i}",
+            label_visibility="visible" if i == 0 else "collapsed"
         )
-        st.session_state.selections[i]["subcategory"] = (
-            None if chosen_sub == "— All subcategories —" else chosen_sub
-        )
+        st.session_state.selections[i]["subcategory"] = None if chosen_sub == "— All subcategories —" else chosen_sub
 
     with c_del:
-        if i == 0:
-            st.write("")
-        if st.button("✖", key=f"del_{i}", help="Remove this row",
-                     disabled=len(st.session_state.selections) == 1):
+        if i == 0: st.write("")
+        if st.button("✖", key=f"del_{i}", disabled=len(st.session_state.selections) == 1):
             remove_row(i)
             st.rerun()
 
 st.button("➕ Add another", on_click=add_row)
-
-# ── Scope summary ─────────────────────────────
 st.divider()
-total_pages = 0
-summary_lines = []
+
+# Resolve endpoints natively out of local map state
+queue = []
 for sel in st.session_state.selections:
     cat = sel["category"]
     sub = sel.get("subcategory")
+    subcats = RAW_MAP[cat]["subcategories"]
     if sub:
-        summary_lines.append(f"• **{cat}  ›  {sub}** (1 page)")
-        total_pages += 1
+        queue.append((f"{cat} › {sub}", subcats[sub]))
     else:
-        n = len(categories[cat])
-        summary_lines.append(f"• **{cat}** — all {n} subcategor{'ies' if n != 1 else 'y'}")
-        total_pages += n
+        for sname, surl in subcats.items():
+            queue.append((f"{cat} › {sname}", surl))
 
-st.success(
-    f"🔍 **{total_pages} page(s)** queued across "
-    f"**{len(st.session_state.selections)} selection(s)**\n\n"
-    + "\n".join(summary_lines)
-)
-st.caption(f"📌 Prices will reflect pincode **{pincode}**.")
+st.success(f"🔍 Queued **{len(queue)} page(s)** for localized processing.")
 
-if total_pages > 8:
-    st.warning(
-        f"⚠️ {total_pages} pages selected — this may take several minutes. "
-        "Consider narrowing to specific subcategories."
-    )
-
-st.divider()
-
-# ─────────────────────────────────────────────
-#  SEARCH BUTTON
-# ─────────────────────────────────────────────
-go = st.button(
-    "🚀 Browse & Track Discounts",
-    type="primary",
-    use_container_width=True,
-)
+go = st.button("🚀 Browse & Track Discounts", type="primary", use_container_width=True)
 
 if go:
-    payload = {
-        "selections": [
-            {
-                "category":    sel["category"],
-                "subcategory": sel.get("subcategory"),
-            }
-            for sel in st.session_state.selections
-        ],
-        "alert_threshold": alert_threshold,
-        "pincode":         pincode,
-    }
-
-    scope_label = ", ".join(
-        f"{s['category']} › {s['subcategory']}" if s.get("subcategory")
-        else s["category"]
-        for s in st.session_state.selections
-    )
-
-    with st.spinner(
-        f"🔄 Scraping **{total_pages}** page(s) for: {scope_label} | pincode {pincode}…  "
-        "Please wait, browser is running."
-    ):
+    all_products = []
+    progress_bar = st.progress(0.0)
+    status_text = st.empty()
+    
+    # Run sequential API calls one URL at a time to prevent Render memory crashes
+    for index, (label, target_url) in enumerate(queue):
+        status_text.caption(f"🔄 Processing layer ({index+1}/{len(queue)}): **{label}**...")
         try:
-            resp = requests.post(
-                f"{API_BASE}/api/check-discount-multi",
-                json=payload,
-                timeout=900,
+            res = requests.get(
+                f"{API_BASE}/api/scrape-single",
+                params={"label": label, "url": target_url, "pincode": pincode},
+                timeout=180
             )
-            data = resp.json()
-        except requests.exceptions.Timeout:
-            st.error("⏱️ Timed out. Try selecting fewer subcategories.")
-            st.stop()
+            data = res.json()
+            if data.get("status") == "success":
+                all_products.extend(data.get("products", []))
         except Exception as e:
-            st.error(f"❌ API error: {e}")
-            st.stop()
-
-    if data.get("status") == "error":
-        st.error(f"❌ {data.get('details', 'Unknown scraper error')}")
-        st.stop()
-
-    elif data.get("status") == "success":
-        total        = data["total_items_scanned"]
-        n_alerts     = data["total_alerts_triggered"]
-        all_items    = data.get("all_scanned_items", [])
-        alert_items  = data.get("high_discount_items", [])
-        urls_scraped = data.get("urls_scraped", 1)
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("📂 Pages Scraped",  urls_scraped)
-        c2.metric("📦 Products Found", total)
-        c3.metric(f"🔥 ≥ {alert_threshold}% Off", n_alerts)
-        c4.metric(
-            "💰 Best Discount",
-            f"{max((p['discount_percent'] for p in all_items), default=0):.1f}%",
-        )
-        c5.metric("📍 Pincode", pincode)
-
-        st.divider()
-
-        if tg_enabled and alert_items:
-            with st.spinner("📲 Sending Telegram alerts…"):
-                sent, err = send_telegram_alert(
-                    tg_token, tg_chat_id, alert_items, alert_threshold
-                )
-            if err:
-                st.warning(f"⚠️ Telegram: sent {sent} message(s), but some errors occurred: {err}")
-            else:
-                st.success(f"✅ Telegram: {sent} alert(s) sent to chat `{tg_chat_id}`")
-        elif tg_enabled and not alert_items:
-            st.info("📲 Telegram: no alerts to send (no products met the threshold).")
-
-        if alert_items:
-            st.subheader(f"🔥 {n_alerts} Product(s) with ≥ {alert_threshold}% Discount")
-
-            df_a = (
-                pd.DataFrame(alert_items)
-                .rename(columns={
-                    "product_name":     "Product",
-                    "mrp":              "MRP (₹)",
-                    "selling_price":    "Price (₹)",
-                    "discount_percent": "Discount %",
-                    "product_link":     "Link",
-                    "source":           "Subcategory",
-                })
-                .sort_values("Discount %", ascending=False)
-            )
-            df_disp = df_a.copy()
-            df_disp["Link"] = df_disp["Link"].apply(
-                lambda u: f'<a href="{u}" target="_blank">🔗 View</a>'
-            )
-            st.write(df_disp.to_html(escape=False, index=False), unsafe_allow_html=True)
-        else:
-            st.info(
-                f"ℹ️ No products with ≥ {alert_threshold}% discount found.  "
-                "Try lowering the discount threshold in the sidebar."
-            )
-
-        st.divider()
-
-        with st.expander(f"📋 All {total} Scanned Products", expanded=False):
-            if all_items:
-                df_all = (
-                    pd.DataFrame(all_items)
-                    .rename(columns={
-                        "product_name":     "Product",
-                        "mrp":              "MRP (₹)",
-                        "selling_price":    "Price (₹)",
-                        "discount_percent": "Discount %",
-                        "product_link":     "Link",
-                        "source":           "Subcategory",
-                })
-                .sort_values("Discount %", ascending=False)
-                )
-
-                def colour_discount(val):
-                    if val >= 40: return "background-color:#c6efce;color:#276221"
-                    if val >= 20: return "background-color:#ffeb9c;color:#9c5700"
-                    if val >  0:  return "background-color:#fff2cc"
-                    return ""
-
-                df_all_disp = df_all.copy()
-                df_all_disp["Link"] = df_all_disp["Link"].apply(
-                    lambda u: f'<a href="{u}" target="_blank">🔗 View</a>'
-                )
-                st.write(
-                    df_all_disp.style.map(colour_discount, subset=["Discount %"])
-                    .to_html(escape=False, index=False),
-                    unsafe_allow_html=True,
-                )
-
-                csv  = df_all.to_csv(index=False).encode("utf-8")
-                safe = scope_label.replace(" ", "_").replace("›", "-").replace("/", "-")[:60]
-                st.download_button(
-                    "⬇️ Download as CSV",
-                    data=csv,
-                    file_name=f"zepto_{safe}_{pincode}.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.warning("No products were returned from Zepto.")
-    else:
-        st.error("Unexpected response from backend.")
-else:
-    st.info(
-        "👆 Build your selection above (add as many rows as you like), "
-        "then click **Browse & Track Discounts**."
-                         )
+            st.warning(f"⚠️ Layer response skipped on '{label}': {e}")
+            
+        progress_bar.progress((index + 1) / len(queue))
         
+    status_text.empty()
+    progress_bar.empty()
+    
+    # Deduplicate product lists
+    seen_links = set()
+    unique_items = []
+    for item in all_products:
+        if item["product_link"] not in seen_links:
+            seen_links.add(item["product_link"])
+            unique_items.append(item)
+
+    alert_items = [p for p in unique_items if p["discount_percent"] >= alert_threshold]
+
+    # Metrics Layout
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📂 Pages Extracted", len(queue))
+    c2.metric("📦 Products Found", len(unique_items))
+    c3.metric(f"🔥 ≥ {alert_threshold}% Off", len(alert_items))
+    
+    st.divider()
+
+    if tg_enabled and alert_items:
+        with st.spinner("📲 Sending Telegram alerts…"):
+            sent, err = send_telegram_alert(tg_token, tg_chat_id, alert_items, alert_threshold)
+        if err: st.warning(f"⚠️ Telegram notice: {err}")
+        else: st.success(f"✅ Telegram: {sent} alerts sent.")
+
+    if alert_items:
+        st.subheader("🔥 High-Discount Products Found")
+        df_disp = pd.DataFrame(alert_items).rename(columns={
+            "product_name": "Product", "mrp": "MRP (₹)", "selling_price": "Price (₹)",
+            "discount_percent": "Discount %", "product_link": "Link", "source": "Subcategory"
+        }).sort_values("Discount %", ascending=False)
+        df_disp["Link"] = df_disp["Link"].apply(lambda u: f'<a href="{u}" target="_blank">🔗 View</a>')
+        st.write(df_disp.to_html(escape=False, index=False), unsafe_allow_html=True)
+    else:
+        st.info("ℹ️ No items matched your discount threshold.")
